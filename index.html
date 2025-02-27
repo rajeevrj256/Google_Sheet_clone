@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Sheets Clone</title>
+    <style>
+        .toolbar { padding: 10px; background: #f0f0f0; }
+        .toolbar button { margin-right: 5px; }
+        #formula-bar { padding: 5px; width: 100%; }
+        #grid { border-collapse: collapse; }
+        #grid td {
+            border: 1px solid #ddd;
+            min-width: 100px;
+            height: 25px;
+            padding: 5px;
+            background: white;
+        }
+        #grid td.selected { background: #e2eef7; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button onclick="toggleFormat('bold')">B</button>
+        <button onclick="toggleFormat('italic')">I</button>
+        <button onclick="applyFunction('SUM')">SUM</button>
+        <button onclick="applyFunction('UPPER')">UPPER</button>
+    </div>
+    <input type="text" id="formula-bar" placeholder="Formula bar">
+    <div id="grid-container"></div>
+
+<script>
+class Spreadsheet {
+    constructor(rows = 50, cols = 26) {
+        this.rows = rows;
+        this.cols = cols;
+        this.data = Array(rows).fill().map(() => 
+            Array(cols).fill().map(() => ({
+                value: '',
+                formula: '',
+                style: {},
+                dependents: new Set(),
+                dependencies: new Set()
+            }))
+        );
+        this.selectedRange = { start: [0,0], end: [0,0] };
+    }
+
+    setCell(row, col, value) {
+        const cell = this.data[row][col];
+        if (value.startsWith('=')) {
+            this.parseFormula(row, col, value);
+        } else {
+            cell.value = value;
+            cell.formula = '';
+        }
+        this.updateDependents(row, col);
+    }
+
+    parseFormula(row, col, formula) {
+        const cell = this.data[row][col];
+        const oldDeps = [...cell.dependencies];
+        
+        // Clear old dependencies
+        oldDeps.forEach(([r, c]) => this.data[r][c].dependents.delete(`${row},${col}`));
+        cell.dependencies.clear();
+
+        // Extract new dependencies
+        const deps = this.extractDependencies(formula, row, col);
+        deps.forEach(([r, c]) => {
+            cell.dependencies.add(`${r},${c}`);
+            this.data[r][c].dependents.add(`${row},${col}`);
+        });
+
+        cell.formula = formula;
+        cell.value = this.evaluateFormula(row, col);
+    }
+
+    evaluateFormula(row, col) {
+        const cell = this.data[row][col];
+        const formula = cell.formula.slice(1);
+        const [fn, args] = formula.split(/\(|\)/);
+        
+        try {
+            switch(fn) {
+                case 'SUM': return this.sumRange(args, row, col);
+                case 'UPPER': return this.upper(args, row, col);
+                // Add other functions
+                default: return '#ERROR';
+            }
+        } catch (e) {
+            return '#ERROR';
+        }
+    }
+
+    sumRange(range, row, col) {
+        const cells = this.parseRange(range, row, col);
+        return cells.reduce((sum, [r, c]) => sum + Number(this.data[r][c].value) || 0, 0);
+    }
+
+    upper(ref) {
+        const [r, c] = this.parseRef(ref);
+        return this.data[r][c].value.toUpperCase();
+    }
+
+    parseRange(range, row, col) {
+        const [start, end] = range.split(':');
+        const [startRow, startCol] = this.parseRef(start, row, col);
+        const [endRow, endCol] = this.parseRef(end, row, col);
+        const cells = [];
+        for (let r = startRow; r <= endRow; r++) {
+            for (let c = startCol; c <= endCol; c++) {
+                cells.push([r, c]);
+            }
+        }
+        return cells;
+    }
+
+    parseRef(ref, currentRow, currentCol) {
+        const match = ref.match(/(\$?)([A-Z]+)(\$?)(\d+)/);
+        if (!match) return [currentRow, currentCol];
+        
+        const colAbs = match[1], col = this.colToIndex(match[2]);
+        const rowAbs = match[3], row = parseInt(match[4]) - 1;
+        
+        return [
+            rowAbs ? row : currentRow,
+            colAbs ? col : currentCol
+        ];
+    }
+
+    colToIndex(col) {
+        return col.split('').reduce((idx, c) => idx * 26 + c.charCodeAt(0) - 64, 0) - 1;
+    }
+
+    updateDependents(row, col) {
+        const visited = new Set();
+        const queue = [[row, col]];
+        
+        while (queue.length) {
+            const [r, c] = queue.shift();
+            this.data[r][c].dependents.forEach(dep => {
+                const [dr, dc] = dep.split(',').map(Number);
+                if (!visited.has(`${dr},${dc}`)) {
+                    visited.add(`${dr},${dc}`);
+                    queue.push([dr, dc]);
+                    this.data[dr][dc].value = this.evaluateFormula(dr, dc);
+                }
+            });
+        }
+    }
+}
+
+// UI Handling
+const sheet = new Spreadsheet();
+let selectedCell = [0, 0];
+
+function renderGrid() {
+    const container = document.getElementById('grid-container');
+    container.innerHTML = '<table id="grid"></table>';
+    const grid = document.getElementById('grid');
+    
+    for (let r = 0; r < sheet.rows; r++) {
+        const tr = document.createElement('tr');
+        for (let c = 0; c < sheet.cols; c++) {
+            const td = document.createElement('td');
+            td.textContent = sheet.data[r][c].value;
+            td.addEventListener('click', () => selectCell(r, c));
+            if (r === selectedCell[0] && c === selectedCell[1]) td.classList.add('selected');
+            tr.appendChild(td);
+        }
+        grid.appendChild(tr);
+    }
+}
+
+/*************  ✨ Codeium Command 🌟  *************/
+function selectCell(r, c) {
+    selectedCell = [r, c];
+    document.getElementById('formula-bar').value = sheet.data[r][c].formula;
+    renderGrid();
+}
+/******  895f3f97-c716-4883-ac6e-ffcb8fc3bc6f  *******/
+
+document.getElementById('formula-bar').addEventListener('change', (e) => {
+    const [r, c] = selectedCell;
+    sheet.setCell(r, c, e.target.value);
+    renderGrid();
+});
+
+function applyFunction(fn) {
+    const [r, c] = selectedCell;
+    sheet.setCell(r, c, `=${fn}(A1)`); // Simplified example
+    renderGrid();
+}
+
+// Initial render
+renderGrid();
+</script>
+</body>
+</html>
